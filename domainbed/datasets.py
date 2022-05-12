@@ -193,18 +193,19 @@ class MultipleEnvironmentImageFolder(MultipleDomainDataset):
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
-
-        # augment_transform = transforms.Compose([
-        #     # transforms.Resize((224,224)),
-        #     transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
-        #     transforms.RandomHorizontalFlip(),
-        #     transforms.ColorJitter(0.3, 0.3, 0.3, 0.3),
-        #     transforms.RandomGrayscale(),
-        #     transforms.ToTensor(),
-        #     transforms.Normalize(
-        #         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        # ])
-        augment_transform = AugSimCLR(224)
+        if hparams['cl']:
+            augment_transform = AugSimCLR(224)
+        else:
+            augment_transform = transforms.Compose([
+                # transforms.Resize((224,224)),
+                transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
+                transforms.RandomHorizontalFlip(),
+                transforms.ColorJitter(0.3, 0.3, 0.3, 0.3),
+                transforms.RandomGrayscale(),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
 
         self.datasets = []
         for i, environment in enumerate(environments):
@@ -360,3 +361,26 @@ class WILDSFMoW(WILDSDataset):
         dataset = FMoWDataset(root_dir=root)
         super().__init__(
             dataset, "region", test_envs, hparams['data_augmentation'], hparams)
+
+# from domainbed.lib.lmdb import LMDBPT
+
+# class ImageNetDataset(PyTorchDataset):
+
+#     max_batch_size = 256
+
+#     def __init__(self, split, data_root=os.getenv("DATA"), device="cuda"):
+#         if split == "train":
+#             dataset = LMDBPT(
+#                 os.path.join(data_root, "lmdb", "train.lmdb"),
+#                 transform=get_transform("imagenet", augment=True, color_process=False),
+#                 is_image=True,
+#             )
+#         elif split == "test":
+#             dataset = LMDBPT(
+#                 os.path.join(data_root, "lmdb", "val.lmdb"),
+#                 transform=get_transform("imagenet", augment=False, color_process=False),
+#                 is_image=True,
+#             )
+#         else:
+#             raise ValueError(f"Unknown split '{split}'.")
+#         super().__init__(dataset, device=device)

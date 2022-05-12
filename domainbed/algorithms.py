@@ -66,11 +66,17 @@ class Algorithm(torch.nn.Module):
 class SpectralCLR(Algorithm):
     def __init__(self, input_shape, num_classes, num_domains, hparams):
         super().__init__(input_shape, num_classes, num_domains, hparams)
-        self.featurizer = networks.ResNet(input_shape, hparams)
+        featurizer0 = networks.ResNet(input_shape, hparams)
+        self.featurizer = nn.Sequential(featurizer0,
+        networks.Classifier(
+            featurizer0.n_outputs,
+            num_classes,
+            is_nonlinear=True))
         self.classifier = networks.Classifier(
             num_classes,
             num_classes,
-            self.hparams['nonlinear_classifier'])
+            is_nonlinear=False)
+
 
         self.network = nn.Sequential(self.featurizer, self.classifier)
 
@@ -118,16 +124,26 @@ class SpectralCLR(Algorithm):
 
         return {'loss': loss.item()}
 
+    def predict(self, x):
+        return self.network(x)
+
+    def forward(self, x):
+        return self.predict(x)
 
 
 class SimCLR(Algorithm):
     def __init__(self, input_shape, num_classes, num_domains, hparams):
         super().__init__(input_shape, num_classes, num_domains, hparams)
-        self.featurizer = networks.ResNet(input_shape, hparams)
+        featurizer0 = networks.ResNet(input_shape, hparams)
+        self.featurizer = nn.Sequential(featurizer0,
+        networks.Classifier(
+            featurizer0.n_outputs,
+            num_classes,
+            is_nonlinear=True))
         self.classifier = networks.Classifier(
             num_classes,
             num_classes,
-            self.hparams['nonlinear_classifier'])
+            is_nonlinear=False)
 
         self.network = nn.Sequential(self.featurizer, self.classifier)
 
@@ -187,6 +203,12 @@ class SimCLR(Algorithm):
         self.scheduler.step()
         return {'loss': loss.item()}
 
+    def predict(self, x):
+        return self.network(x)
+
+    def forward(self, x):
+        return self.predict(x)
+
 
 class ERM(Algorithm):
     """
@@ -196,11 +218,16 @@ class ERM(Algorithm):
     def __init__(self, input_shape, num_classes, num_domains, hparams):
         super(ERM, self).__init__(input_shape, num_classes, num_domains,
                                   hparams)
-        self.featurizer = networks.Featurizer(input_shape, self.hparams)
-        self.classifier = networks.Classifier(
-            self.featurizer.n_outputs,
+        featurizer0 = networks.ResNet(input_shape, hparams)
+        self.featurizer = nn.Sequential(featurizer0,
+        networks.Classifier(
+            featurizer0.n_outputs,
             num_classes,
-            self.hparams['nonlinear_classifier'])
+            is_nonlinear=True))
+        self.classifier = networks.Classifier(
+            num_classes,
+            num_classes,
+            is_nonlinear=False)
 
         self.network = nn.Sequential(self.featurizer, self.classifier)
         self.optimizer = torch.optim.Adam(

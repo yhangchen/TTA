@@ -27,6 +27,7 @@ from domainbed.lib.fast_data_loader import InfiniteDataLoader, FastDataLoader, D
 from domainbed import model_selection
 from domainbed.lib.query import Q
 from domainbed import adapt_algorithms
+from domainbed.lib.avg import AvgMeter
 import itertools
 
 
@@ -79,7 +80,7 @@ def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
     return -(x.softmax(1) * x.log_softmax(1)).sum(1)
 
 
-def accuracy_ent(network, loader, weights, device, adapt=False):
+def accuracy_ent(network, loader, weights, device, Sigma, adapt=False):
     correct = 0
     total = 0
     weights_offset = 0
@@ -92,6 +93,7 @@ def accuracy_ent(network, loader, weights, device, adapt=False):
             y = y.to(device)
             if adapt is None:
                 p = network(x)
+                z = network.featurizer(x)
             else:
                 p = network(x, adapt)
             if weights is None:
@@ -106,9 +108,10 @@ def accuracy_ent(network, loader, weights, device, adapt=False):
                 correct += (p.argmax(1).eq(y).float() * batch_weights).sum().item()
             total += batch_weights.sum().item()
             ent += softmax_entropy(p).sum().item()
+            Sigma.update(z.T @ z)
     network.train()
 
-    return correct / total, ent / total
+    return correct / total, ent / total, Sigma.get()
 
 
 if __name__ == "__main__":
@@ -289,11 +292,12 @@ if __name__ == "__main__":
         algorithm.load_state_dict(algorithm_dict)
 
     # Evaluate base model
-    print("Base model's results")
+    print("Base model's results & Update Sigma")
     results = {}
     evals = zip(eval_loader_names, eval_loaders, eval_weights)
+    Sigma = AvgMeter()
     for name, loader, weights in evals:
-        acc, ent = accuracy_ent(algorithm, loader, weights, device, adapt=None)
+        acc, ent, Sigma_soft = accuracy_ent(algorithm, loader, weights, device, Sigma, adapt=None)
         results[name+'_acc'] = acc
         results[name+'_ent'] = ent
     results_keys = sorted(results.keys())

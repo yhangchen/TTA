@@ -9,7 +9,7 @@ import copy
 import numpy as np
 
 from domainbed.algorithms import Algorithm
-
+from domainbed.lib.avg import AvgMeter
 
 ALGORITHMS = [
     'T3A', 
@@ -20,7 +20,8 @@ ALGORITHMS = [
     'PseudoLabel', 
     'PLClf', 
     'SHOT', 
-    'SHOTIM'
+    'SHOTIM',
+    'T3A_Sigma'
 ]
 
 
@@ -29,6 +30,64 @@ def get_algorithm_class(algorithm_name):
     if algorithm_name not in globals():
         raise NotImplementedError("Algorithm not found: {}".format(algorithm_name))
     return globals()[algorithm_name]
+
+class T3A_Sigma(Algorithm):
+    def __init__(self, input_shape, num_classes, num_domains, hparams, algorithm, Sigma):
+        super().__init__(input_shape, num_classes, num_domains, hparams)
+        self.featurizer = algorithm.featurizer
+        self.classifier = algorithm.classifier
+
+        warmup_supports = self.classifier.weight.data
+        self.warmup_supports = warmup_supports
+        warmup_prob = self.classifier(self.warmup_supports)
+        self.warmup_ent = softmax_entropy(warmup_prob)
+        self.warmup_labels = torch.nn.functional.one_hot(warmup_prob.argmax(1), num_classes=num_classes).float()
+
+        self.supports = self.warmup_supports.data
+        self.labels = self.warmup_labels.data
+        self.ent = self.warmup_ent.data
+
+        self.filter_K = hparams['filter_K']
+        self.num_classes = num_classes
+        self.softmax = torch.nn.Softmax(-1)
+
+        self.softSigma = Sigma
+        self.Sigma = AvgMeter()
+
+    def forward(self, x, adapt=False):
+        if not self.hparams['cached_loader']:
+            z = self.featurizer(x)
+        else:
+            z = x
+        if adapt:
+            # online adaptation
+            p = self.classifier(z)
+            yhat = torch.nn.functional.one_hot(p.argmax(1), num_classes=self.num_classes).float()
+            ent = softmax_entropy(p)
+
+            # prediction
+            self.supports = self.supports.to(z.device)
+            self.labels = self.labels.to(z.device)
+            self.ent = self.ent.to(z.device)
+            self.supports = torch.cat([self.supports, z])
+            self.labels = torch.cat([self.labels, yhat])
+            self.ent = torch.cat([self.ent, ent])
+            self.Sigma.update(z.T @ z)
+        
+        supports, labels = self.select_supports()
+        supports = torch.nn.functional.normalize(supports, dim=1)
+        weights = (supports.T @ (labels))
+        Sigma0 = (self.softSigma + self.Sigma.get())/2.0
+        return z @ torch.nn.functional.normalize(Sigma0 @ weights, dim=0)
+
+    def predict(self, x, adapt=False):
+        return self(x, adapt)
+
+    def reset(self):
+        self.supports = self.warmup_supports.data
+        self.labels = self.warmup_labels.data
+        self.ent = self.warmup_ent.data
+        self.Sigma = AvgMeter()
 
 
 class T3A(Algorithm):
