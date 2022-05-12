@@ -26,7 +26,9 @@ ALGORITHMS = [
     'ARM',
     'VREx',
     'RSC',
-    'SD'
+    'SD',
+    'SpectralCLR',
+    'SimCLR'
 ]
 
 
@@ -60,6 +62,130 @@ class Algorithm(torch.nn.Module):
 
     def predict(self, x):
         raise NotImplementedError
+
+class SpectralCLR(Algorithm):
+    def __init__(self, input_shape, num_classes, num_domains, hparams):
+        super().__init__(input_shape, num_classes, num_domains, hparams)
+        self.featurizer = networks.ResNet(input_shape, hparams)
+        self.classifier = networks.Classifier(
+            num_classes,
+            num_classes,
+            self.hparams['nonlinear_classifier'])
+
+        self.network = nn.Sequential(self.featurizer, self.classifier)
+
+        self.optimizer = torch.optim.Adam(
+            self.featurizer.parameters(),
+            lr=self.hparams["lr"],
+            weight_decay=self.hparams['weight_decay']
+        )
+        self.hparams['n_views'] = 2
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=self.hparams['T_max'], eta_min=0, last_epoch=-1)
+
+
+    def D(self, z1, z2):
+        mu = self.hparams['mu']
+        mask1 = (torch.norm(z1, p=2, dim=1) < np.sqrt(mu)).float().unsqueeze(1)
+        mask2 = (torch.norm(z2, p=2, dim=1) < np.sqrt(mu)).float().unsqueeze(1)
+        z1 = mask1 * z1 + (1-mask1) * F.normalize(z1, dim=1) * np.sqrt(mu)
+        z2 = mask2 * z2 + (1-mask2) * F.normalize(z2, dim=1) * np.sqrt(mu)
+        loss_part1 = -2 * torch.mean(z1 * z2) * z1.shape[1]
+        square_term = torch.matmul(z1, z2.T) ** 2
+        loss_part2 = torch.mean(torch.triu(square_term, diagonal=1) + torch.tril(square_term, diagonal=-1)) * \
+                    z1.shape[0] / (z1.shape[0] - 1)
+        return (loss_part1 + loss_part2) / mu, {"part1": loss_part1 / mu, "part2": loss_part2 / mu}
+
+
+    def update(self, minibatches,unlabeled=None):
+        device = "cuda" if minibatches[0][0].is_cuda else "cpu"
+        with torch.no_grad():
+            all_x_1 = torch.cat([x1 for x1, _, _ in minibatches])
+            all_x_2 = torch.cat([x2 for _, x2, _ in minibatches])
+
+        all_x_1.to(device=device)
+        all_x_2.to(device=device)
+
+        all_z_1 = self.featurizer(all_x_1)
+        all_z_2 = self.featurizer(all_x_2)
+
+        loss, _ = self.D(all_z_1, all_z_2)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.scheduler.step()
+
+        return {'loss': loss.item()}
+
+
+
+class SimCLR(Algorithm):
+    def __init__(self, input_shape, num_classes, num_domains, hparams):
+        super().__init__(input_shape, num_classes, num_domains, hparams)
+        self.featurizer = networks.ResNet(input_shape, hparams)
+        self.classifier = networks.Classifier(
+            num_classes,
+            num_classes,
+            self.hparams['nonlinear_classifier'])
+
+        self.network = nn.Sequential(self.featurizer, self.classifier)
+
+        self.optimizer = torch.optim.Adam(
+            self.featurizer.parameters(),
+            lr=self.hparams["lr"],
+            weight_decay=self.hparams['weight_decay']
+        )
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=self.hparams['T_max'], eta_min=0, last_epoch=-1)
+
+    def info_nce_loss(self, features, device):
+        # https://github.com/sthalles/SimCLR
+        labels = torch.cat([torch.arange(features.shape[0]//2) for i in range(self.hparams['n_views'])], dim=0)
+        labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
+        labels = labels.to(device)
+
+        features = F.normalize(features, dim=1)
+
+        similarity_matrix = torch.matmul(features, features.T)
+        assert similarity_matrix.shape == labels.shape
+
+        # discard the main diagonal from both: labels and similarities matrix
+        mask = torch.eye(labels.shape[0], dtype=torch.bool).to(device)
+        labels = labels[~mask].view(labels.shape[0], -1)
+        similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
+        assert similarity_matrix.shape == labels.shape
+
+        # select and combine multiple positives
+        positives = similarity_matrix[labels.bool()].view(labels.shape[0], -1)
+
+        # select only the negatives the negatives
+        negatives = similarity_matrix[~labels.bool()].view(similarity_matrix.shape[0], -1)
+
+        logits = torch.cat([positives, negatives], dim=1)
+        labels = torch.zeros(logits.shape[0], dtype=torch.long).to(device)
+
+        logits = logits / self.hparams['temperature']
+        return logits, labels
+
+
+    def update(self, minibatches,unlabeled=None):
+        device = "cuda" if minibatches[0][0].is_cuda else "cpu"
+        with torch.no_grad():
+            all_x_1 = torch.cat([x1 for x1, _, _ in minibatches])
+            all_x_2 = torch.cat([x2 for _, x2, _ in minibatches])
+        all_x = torch.cat([all_x_1, all_x_2], dim=0)
+        all_x.to(device=device)
+
+        features = self.featurizer(all_x)
+        logits, labels = self.info_nce_loss(features, device)
+        loss = F.cross_entropy(logits, labels)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.scheduler.step()
+        return {'loss': loss.item()}
 
 
 class ERM(Algorithm):

@@ -31,7 +31,7 @@ def _hparams(algorithm, dataset, random_seed):
     _hparam('backbone', 'resnet50', lambda r: 'resnet50')
     _hparam('resnet_dropout', 0., lambda r: r.choice([0.0, 0.1, 0.5]))
     _hparam('class_balanced', False, lambda r: False)
-    _hparam('nonlinear_classifier', False, lambda r: False)
+    _hparam('nonlinear_classifier', True, lambda r: True)
     # _hparam('nonlinear_classifier', False, lambda r: bool(r.choice([False, True])))
 
     # Algorithm-specific hparam definitions. Each block of code below
@@ -79,6 +79,11 @@ def _hparams(algorithm, dataset, random_seed):
 
     elif algorithm == "SD":
         _hparam('sd_reg', 0.1, lambda r: 10**r.uniform(-5, -1))
+    
+    elif 'CLR' in algorithm:
+        _hparam('temperature', 0.07, lambda r: 0.07)
+        _hparam('mu', 1.0, lambda r: 1.0)
+        _hparam('n_views', 2, lambda r: 2)
 
 
     # Dataset-and-algorithm-specific hparam definitions. Each block of code

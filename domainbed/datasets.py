@@ -8,7 +8,7 @@ import torchvision.datasets.folder
 from torch.utils.data import TensorDataset, Subset
 from torchvision.datasets import MNIST, ImageFolder
 from torchvision.transforms.functional import rotate
-
+from domainbed.lib.augmentation import AugSimCLR
 from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
 from wilds.datasets.fmow_dataset import FMoWDataset
 
@@ -194,16 +194,17 @@ class MultipleEnvironmentImageFolder(MultipleDomainDataset):
                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
-        augment_transform = transforms.Compose([
-            # transforms.Resize((224,224)),
-            transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(0.3, 0.3, 0.3, 0.3),
-            transforms.RandomGrayscale(),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+        # augment_transform = transforms.Compose([
+        #     # transforms.Resize((224,224)),
+        #     transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
+        #     transforms.RandomHorizontalFlip(),
+        #     transforms.ColorJitter(0.3, 0.3, 0.3, 0.3),
+        #     transforms.RandomGrayscale(),
+        #     transforms.ToTensor(),
+        #     transforms.Normalize(
+        #         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        # ])
+        augment_transform = AugSimCLR(224)
 
         self.datasets = []
         for i, environment in enumerate(environments):

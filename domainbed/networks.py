@@ -5,10 +5,10 @@ import torch.nn.functional as F
 import torchvision.models
 
 from domainbed.lib import misc
-from domainbed.lib import wide_resnet
-from domainbed.lib import big_transfer
-from domainbed.lib import vision_transformer
-from domainbed.lib import mlp_mixer
+# from domainbed.lib import wide_resnet
+# from domainbed.lib import big_transfer
+# from domainbed.lib import vision_transformer
+# from domainbed.lib import mlp_mixer
 
 def remove_batch_norm_from_resnet(model):
     fuse = torch.nn.utils.fusion.fuse_conv_bn_eval
