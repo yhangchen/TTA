@@ -72,13 +72,33 @@ class T3A_Sigma(Algorithm):
             self.supports = torch.cat([self.supports, z])
             self.labels = torch.cat([self.labels, yhat])
             self.ent = torch.cat([self.ent, ent])
-            self.Sigma.update(z.T @ z)
+            self.Sigma.update(z.T @ z, z.shape[0])
         
         supports, labels = self.select_supports()
         supports = torch.nn.functional.normalize(supports, dim=1)
         weights = (supports.T @ (labels))
-        Sigma0 = (self.softSigma + self.Sigma.get())/2.0
+        Sigma0 = (self.Sigma.get())/2.0
         return z @ torch.nn.functional.normalize(Sigma0 @ weights, dim=0)
+
+    def select_supports(self):
+        ent_s = self.ent
+        y_hat = self.labels.argmax(dim=1).long()
+        filter_K = self.filter_K
+        if filter_K == -1:
+            indices = torch.LongTensor(list(range(len(ent_s))))
+
+        indices = []
+        indices1 = torch.LongTensor(list(range(len(ent_s))))
+        for i in range(self.num_classes):
+            _, indices2 = torch.sort(ent_s[y_hat == i])
+            indices.append(indices1[y_hat==i][indices2][:filter_K])
+        indices = torch.cat(indices)
+
+        self.supports = self.supports[indices]
+        self.labels = self.labels[indices]
+        self.ent = self.ent[indices]
+        
+        return self.supports, self.labels
 
     def predict(self, x, adapt=False):
         return self(x, adapt)

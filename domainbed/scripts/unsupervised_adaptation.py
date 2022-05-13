@@ -80,7 +80,7 @@ def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
     return -(x.softmax(1) * x.log_softmax(1)).sum(1)
 
 
-def accuracy_ent(network, loader, weights, device, Sigma, adapt=False):
+def accuracy_ent(network, loader, weights, device, Sigma=None, adapt=False):
     correct = 0
     total = 0
     weights_offset = 0
@@ -94,6 +94,7 @@ def accuracy_ent(network, loader, weights, device, Sigma, adapt=False):
             if adapt is None:
                 p = network(x)
                 z = network.featurizer(x)
+                Sigma.update(z.T @ z, z.shape[0])
             else:
                 p = network(x, adapt)
             if weights is None:
@@ -108,10 +109,12 @@ def accuracy_ent(network, loader, weights, device, Sigma, adapt=False):
                 correct += (p.argmax(1).eq(y).float() * batch_weights).sum().item()
             total += batch_weights.sum().item()
             ent += softmax_entropy(p).sum().item()
-            Sigma.update(z.T @ z)
     network.train()
 
-    return correct / total, ent / total, Sigma.get()
+    if Sigma is not None:
+        return correct / total, ent / total, Sigma.get()
+    else:
+        return correct / total, ent / total
 
 
 if __name__ == "__main__":
@@ -286,7 +289,7 @@ if __name__ == "__main__":
     checkpoint_vals = collections.defaultdict(lambda: [])
 
     # load trained model
-    ckpt = torch.load(os.path.join(args.output_dir, 'IID_best.pkl'))
+    ckpt = torch.load(os.path.join(args.output_dir, 'model.pkl'))
     algorithm_dict = ckpt['model_dict']
     if algorithm_dict is not None:
         algorithm.load_state_dict(algorithm_dict)
@@ -296,10 +299,13 @@ if __name__ == "__main__":
     results = {}
     evals = zip(eval_loader_names, eval_loaders, eval_weights)
     Sigma = AvgMeter()
+    Sigma_soft = AvgMeter()
     for name, loader, weights in evals:
-        acc, ent, Sigma_soft = accuracy_ent(algorithm, loader, weights, device, Sigma, adapt=None)
+        acc, ent, Sigma_soft0 = accuracy_ent(algorithm, loader, weights, device, Sigma, adapt=None)
         results[name+'_acc'] = acc
         results[name+'_ent'] = ent
+        Sigma_soft.update(Sigma_soft0)
+    Sigma_soft = Sigma_soft.get()
     results_keys = sorted(results.keys())
     misc.print_row(results_keys, colwidth=12)
     misc.print_row([results[key] for key in results_keys], colwidth=12)
@@ -326,7 +332,7 @@ if __name__ == "__main__":
     adapt_algorithm_class = adapt_algorithms.get_algorithm_class(
         args.adapt_algorithm)
     
-    if args.adapt_algorithm in ['T3A']:
+    if args.adapt_algorithm in ['T3A', 'T3A_Sigma']:
         adapt_hparams_dict = {
             'filter_K': [1, 5, 20, 50, 100, -1], 
         }
@@ -356,7 +362,7 @@ if __name__ == "__main__":
     for adapt_hparams in adapt_hparams_list:
         adapt_hparams['cached_loader'] = use_featurer_cache
         adapted_algorithm = adapt_algorithm_class(dataset.input_shape, dataset.num_classes,
-            len(dataset) - len(args.test_envs), adapt_hparams, algorithm
+            len(dataset) - len(args.test_envs), adapt_hparams, algorithm, Sigma_soft
         )
         # adapted_algorithm = DataParallelPassthrough(adapted_algorithm)
         adapted_algorithm.to(device)
