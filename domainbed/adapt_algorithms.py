@@ -77,7 +77,7 @@ class T3A_Sigma(Algorithm):
         supports, labels = self.select_supports()
         supports = torch.nn.functional.normalize(supports, dim=1)
         weights = (supports.T @ (labels))
-        Sigma0 = (self.Sigma.get())/2.0
+        Sigma0 = (self.softSigma+self.Sigma.get())/2.0
         return z @ torch.nn.functional.normalize(Sigma0 @ weights, dim=0)
 
     def select_supports(self):

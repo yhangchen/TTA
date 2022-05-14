@@ -25,6 +25,24 @@ from domainbed import model_selection
 from domainbed.lib.query import Q
 
 
+def cal_warmup_support(algorithm, loader, weights, classifier_shape, device):
+    algorithm.eval()
+    classifier_weights = torch.zeros(classifier_shape)
+    classifier_weights = classifier_weights.to(device)
+    counts = [0 for i in range(classifier_weights.shape[0])]
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+            z = algorithm.featurizer(x)
+            z = z.to(device)
+            for i in range(len(y)):
+                classifier_weights[y[i]] += z[i]
+                counts[y[i]] += 1
+    for i in range(classifier_weights.shape[0]):
+        classifier_weights[i] /= max(counts[i], 1)
+    return classifier_weights
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Domain generalization')
     parser.add_argument('--data_dir', type=str)
@@ -224,7 +242,7 @@ if __name__ == "__main__":
     #     algorithm.update_classifier(minibatches_device, step)
     # algorithm.set_classifier()
 
-
+    '''
     last_results_keys = None
     for step in range(start_step, n_steps):
         step_start_time = time.time()
@@ -277,6 +295,18 @@ if __name__ == "__main__":
             
             if args.save_model_every_checkpoint:
                 save_checkpoint(f'model_step{step}.pkl')
+    '''
+    load_checkpoint('model.pkl')
+    evals = zip(eval_loader_names, eval_loaders, eval_weights)
+    classifier_weights = 0.0
+    count = 0
+    classifier_shape = (algorithm.classifier.out_features, algorithm.classifier.in_features)
+    for name, loader, weights in evals:
+        count += 1
+        classifier_weights += cal_warmup_support(algorithm, loader, weights, classifier_shape, device)
+
+    algorithm.classifier.weight = torch.nn.parameter.Parameter(classifier_weights/count)
+    algorithm.classifier.bias = torch.nn.parameter.Parameter(torch.empty(algorithm.classifier.out_features))
 
     save_checkpoint('model.pkl')
 

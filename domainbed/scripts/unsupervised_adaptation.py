@@ -298,9 +298,9 @@ if __name__ == "__main__":
     print("Base model's results & Update Sigma")
     results = {}
     evals = zip(eval_loader_names, eval_loaders, eval_weights)
-    Sigma = AvgMeter()
-    Sigma_soft = AvgMeter()
+    Sigma_soft = AvgMeter(gamma=1.0)
     for name, loader, weights in evals:
+        Sigma = AvgMeter(gamma=1.0)
         acc, ent, Sigma_soft0 = accuracy_ent(algorithm, loader, weights, device, Sigma, adapt=None)
         results[name+'_acc'] = acc
         results[name+'_ent'] = ent
@@ -334,7 +334,7 @@ if __name__ == "__main__":
     
     if args.adapt_algorithm in ['T3A', 'T3A_Sigma']:
         adapt_hparams_dict = {
-            'filter_K': [1, 5, 20, 50, 100, -1], 
+            'filter_K': [-1], 
         }
     elif args.adapt_algorithm in ['TentFull', 'TentPreBN', 'TentClf', 'TentNorm']:
         adapt_hparams_dict = {
