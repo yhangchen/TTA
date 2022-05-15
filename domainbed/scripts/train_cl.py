@@ -33,9 +33,12 @@ def cal_warmup_support(algorithm, evals, classifier_shape, device):
     for name, loader, weights in evals:
         with torch.no_grad():
             for x, y in loader:
-                x = x.to(device)
+                x1 = x[0].to(device)
+                x2 = x[1].to(device)
                 y = y.to(device)
-                z = algorithm.featurizer(x)
+                z1 = algorithm.featurizer(x1)
+                z2 = algorithm.featurizer(x2)
+                z = (z1 + z2)/2
                 z = z.to(device)
                 for i in range(len(y)):
                     classifier_weights[y[i]] += z[i]
@@ -295,7 +298,7 @@ if __name__ == "__main__":
             
             if args.save_model_every_checkpoint:
                 save_checkpoint(f'model_step{step}.pkl')
-
+    save_checkpoint('feature.pkl')
     evals = zip(eval_loader_names, eval_loaders, eval_weights)
     classifier_weights = 0.0
     classifier_shape = (algorithm.classifier.out_features, algorithm.classifier.in_features)
