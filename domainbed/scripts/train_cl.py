@@ -27,18 +27,18 @@ from domainbed.lib.query import Q
 
 def cal_warmup_support(algorithm, evals, classifier_shape, device):
     algorithm.eval()
+    algorithm.to(device)
     classifier_weights = torch.zeros(classifier_shape)
     classifier_weights = classifier_weights.to(device)
     counts = [0 for i in range(classifier_weights.shape[0])]
     for name, loader, weights in evals:
         with torch.no_grad():
             for x, y in loader:
-                x1 = x[0].to(device)
-                x2 = x[1].to(device)
+                x = x.to(device)
                 y = y.to(device)
-                z1 = algorithm.featurizer(x1)
-                z2 = algorithm.featurizer(x2)
-                z = (z1 + z2)/2
+                z = algorithm.featurizer(x)
+                # z2 = algorithm.featurizer(x2)
+                # z = (z1 + z2)/2
                 z = z.to(device)
                 for i in range(len(y)):
                     classifier_weights[y[i]] += z[i]
@@ -123,6 +123,10 @@ if __name__ == "__main__":
     if args.dataset in vars(datasets):
         dataset = vars(datasets)[args.dataset](args.data_dir,
             args.test_envs, hparams)
+        hparams['cl'] = False
+        dataset_origin = vars(datasets)[args.dataset](args.data_dir,
+            args.test_envs, hparams)
+        hparams['cl'] = True
     else:
         raise NotImplementedError
 
@@ -165,6 +169,35 @@ if __name__ == "__main__":
         if len(uda):
             uda_splits.append((uda, uda_weights))
 
+    in_splits_origin = []
+    out_splits_origin = []
+    uda_splits_origin = []
+
+    for env_i, env in enumerate(dataset_origin):
+        uda = []
+
+        out, in_ = misc.split_dataset(env,
+            int(len(env)*args.holdout_fraction),
+            misc.seed_hash(args.trial_seed, env_i))
+
+        if env_i in args.test_envs:
+            uda, in_ = misc.split_dataset(in_,
+                int(len(in_)*args.uda_holdout_fraction),
+                misc.seed_hash(args.trial_seed, env_i))
+
+        if hparams['class_balanced']:
+            in_weights_origin = misc.make_weights_for_balanced_classes(in_)
+            out_weights_origin = misc.make_weights_for_balanced_classes(out)
+            if uda is not None:
+                uda_weights_origin = misc.make_weights_for_balanced_classes(uda)
+        else:
+            in_weights_origin, out_weights_origin, uda_weights_origin = None, None, None
+        in_splits_origin.append((in_, in_weights_origin))
+        out_splits_origin.append((out, out_weights_origin))
+        if len(uda):
+            uda_splits_origin.append((uda, uda_weights_origin))
+
+
     train_loaders = [InfiniteDataLoader(
         dataset=env,
         weights=env_weights,
@@ -185,7 +218,8 @@ if __name__ == "__main__":
         dataset=env,
         batch_size=64,
         num_workers=dataset.N_WORKERS)
-        for env, _ in (in_splits + out_splits + uda_splits)]
+        for env, _ in (in_splits_origin + out_splits_origin + uda_splits_origin)]
+        
     eval_weights = [None for _, weights in (in_splits + out_splits + uda_splits)]
     eval_loader_names = ['env{}_in'.format(i)
         for i in range(len(in_splits))]
@@ -211,6 +245,7 @@ if __name__ == "__main__":
 
     train_minibatches_iterator = zip(*train_loaders)
     uda_minibatches_iterator = zip(*uda_loaders)
+    eval_minibatches_iterator = zip(*eval_loaders)
     checkpoint_vals = collections.defaultdict(lambda: [])
 
     steps_per_epoch = min([len(env)/hparams['batch_size'] for env,_ in in_splits])
@@ -237,7 +272,7 @@ if __name__ == "__main__":
         load_dict = torch.load(os.path.join(args.output_dir, filename))
         algorithm.load_state_dict(load_dict['model_dict'])
 
-    # load_checkpoint('model.pkl')
+    load_checkpoint('feature.pkl')
     
     # labeling_minibatches_iterator = zip(*train_loaders)
     # for step in range(n_steps):
@@ -245,7 +280,7 @@ if __name__ == "__main__":
     #         for x,y in next(labeling_minibatches_iterator)]
     #     algorithm.update_classifier(minibatches_device, step)
     # algorithm.set_classifier()
-
+    '''
     last_results_keys = None
     for step in range(start_step, n_steps):
         step_start_time = time.time()
@@ -299,6 +334,7 @@ if __name__ == "__main__":
             if args.save_model_every_checkpoint:
                 save_checkpoint(f'model_step{step}.pkl')
     save_checkpoint('feature.pkl')
+    '''
     evals = zip(eval_loader_names, eval_loaders, eval_weights)
     classifier_weights = 0.0
     classifier_shape = (algorithm.classifier.out_features, algorithm.classifier.in_features)
