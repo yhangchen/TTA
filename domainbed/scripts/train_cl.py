@@ -73,6 +73,9 @@ if __name__ == "__main__":
     parser.add_argument('--uda_holdout_fraction', type=float, default=0)
     parser.add_argument('--skip_model_save', action='store_true')
     parser.add_argument('--save_model_every_checkpoint', action='store_true')
+    parser.add_argument('--encoder', action='store_true')
+    parser.add_argument('--clustering', action='store_true')
+    parser.add_argument('--finetune_step', type=int, default=1000)
     args = parser.parse_args()
 
     # If we ever want to implement checkpointing, just persist these values
@@ -214,11 +217,13 @@ if __name__ == "__main__":
         for i, (env, env_weights) in enumerate(uda_splits)
         if i in args.test_envs]
 
-    eval_loaders = [FastDataLoader(
+    classifier_loaders = [InfiniteDataLoader(
         dataset=env,
-        batch_size=64,
+        weights=env_weights,
+        batch_size=hparams['batch_size'],
         num_workers=dataset.N_WORKERS)
-        for env, _ in (in_splits_origin + out_splits_origin + uda_splits_origin)]
+        for i, (env, env_weights) in enumerate(in_splits_origin)
+        if i not in args.test_envs]
         
     eval_weights = [None for _, weights in (in_splits + out_splits + uda_splits)]
     eval_loader_names = ['env{}_in'.format(i)
@@ -245,7 +250,6 @@ if __name__ == "__main__":
 
     train_minibatches_iterator = zip(*train_loaders)
     uda_minibatches_iterator = zip(*uda_loaders)
-    eval_minibatches_iterator = zip(*eval_loaders)
     checkpoint_vals = collections.defaultdict(lambda: [])
 
     steps_per_epoch = min([len(env)/hparams['batch_size'] for env,_ in in_splits])
@@ -280,70 +284,108 @@ if __name__ == "__main__":
     #         for x,y in next(labeling_minibatches_iterator)]
     #     algorithm.update_classifier(minibatches_device, step)
     # algorithm.set_classifier()
-    last_results_keys = None
-    for step in range(start_step, n_steps):
-        step_start_time = time.time()
-        minibatches_device = [(x[0].to(device), x[1].to(device), y.to(device))
-            for x,y in next(train_minibatches_iterator)]
-        if args.task == "domain_adaptation":
-            uda_device = [x.to(device)
-                for x,_ in next(uda_minibatches_iterator)]
-        else:
-            uda_device = None
-        step_vals = algorithm.update(minibatches_device, uda_device)
-        checkpoint_vals['step_time'].append(time.time() - step_start_time)
+    if args.encoder:
+        print('start training encoder')
+        last_results_keys = None
+        for step in range(start_step, n_steps):
+            step_start_time = time.time()
+            minibatches_device = [(x[0].to(device), x[1].to(device), y.to(device))
+                for x,y in next(train_minibatches_iterator)]
+            if args.task == "domain_adaptation":
+                uda_device = [x.to(device)
+                    for x,_ in next(uda_minibatches_iterator)]
+            else:
+                uda_device = None
+            step_vals = algorithm.update(minibatches_device, uda_device)
+            checkpoint_vals['step_time'].append(time.time() - step_start_time)
 
-        for key, val in step_vals.items():
-            checkpoint_vals[key].append(val)
+            for key, val in step_vals.items():
+                checkpoint_vals[key].append(val)
 
-        if (step % checkpoint_freq == 0) or (step == n_steps - 1):
-            results = {
-                'step': step,
-                'epoch': step / steps_per_epoch,
-            }
+            if (step % checkpoint_freq == 0) or (step == n_steps - 1):
+                results = {
+                    'step': step,
+                    'epoch': step / steps_per_epoch,
+                }
 
-            for key, val in checkpoint_vals.items():
-                results[key] = np.mean(val)
+                for key, val in checkpoint_vals.items():
+                    results[key] = np.mean(val)
 
-            # evals = zip(eval_loader_names, eval_loaders, eval_weights)
-            # for name, loader, weights in evals:
-            #     acc = misc.accuracy(algorithm, loader, weights, device)
-            #     results[name+'_acc'] = acc
+                # evals = zip(eval_loader_names, eval_loaders, eval_weights)
+                # for name, loader, weights in evals:
+                #     acc = misc.accuracy(algorithm, loader, weights, device)
+                #     results[name+'_acc'] = acc
 
-            results_keys = sorted(results.keys())
-            if results_keys != last_results_keys:
-                misc.print_row(results_keys, colwidth=12)
-                last_results_keys = results_keys
-            misc.print_row([results[key] for key in results_keys],
-                colwidth=12)
+                results_keys = sorted(results.keys())
+                if results_keys != last_results_keys:
+                    misc.print_row(results_keys, colwidth=12)
+                    last_results_keys = results_keys
+                misc.print_row([results[key] for key in results_keys],
+                    colwidth=12)
 
-            results.update({
-                'hparams': hparams,
-                'args': vars(args)    
-            })
+                results.update({
+                    'hparams': hparams,
+                    'args': vars(args)    
+                })
 
-            epochs_path = os.path.join(args.output_dir, 'results.jsonl')
-            with open(epochs_path, 'a') as f:
-                f.write(json.dumps(results, sort_keys=True) + "\n")
+                epochs_path = os.path.join(args.output_dir, 'results.jsonl')
+                with open(epochs_path, 'a') as f:
+                    f.write(json.dumps(results, sort_keys=True) + "\n")
 
-            algorithm_dict = algorithm.state_dict()
-            start_step = step + 1
-            checkpoint_vals = collections.defaultdict(lambda: [])
-            
-            if args.save_model_every_checkpoint:
-                save_checkpoint(f'model_step{step}.pkl')
+                algorithm_dict = algorithm.state_dict()
+                start_step = step + 1
+                checkpoint_vals = collections.defaultdict(lambda: [])
                 
-    save_checkpoint('feature.pkl')
+                if args.save_model_every_checkpoint:
+                    save_checkpoint(f'model_step{step}.pkl')
+        save_checkpoint('feature.pkl')
+    else:
+        load_checkpoint('feature.pkl')
 
-    evals = zip(eval_loader_names, eval_loaders, eval_weights)
-    classifier_weights = 0.0
-    classifier_shape = (algorithm.classifier.out_features, algorithm.classifier.in_features)
-    classifier_weights = cal_warmup_support(algorithm, evals, classifier_shape, device)
+    classifier_minibatch_loaders = zip(*classifier_loaders)
+                    
+    if args.clustering:
+        print('start compute class mean')
+        classifier_shape = (algorithm.classifier.out_features, algorithm.classifier.in_features)
+        classifier_weights = torch.zeros(classifier_shape).to(device)
+        counts = [0 for i in range(classifier_weights.shape[0])]
+        for step in range(args.finetune_step):
+            minibatches = [(x.to(device), y.to(device))
+                        for x,y in next(classifier_minibatch_loaders)]
+            with torch.no_grad():
+                all_x = torch.cat([x for x, y in minibatches])
+                all_y = torch.cat([y for x, y in minibatches])
+            z = algorithm.featurizer(all_x)
+            z = z.to(device)
+            for i in range(len(all_y)):
+                classifier_weights[all_y[i]] += z[i]
+                counts[all_y[i]] += 1
+        for i in range(classifier_weights.shape[0]):
+            classifier_weights[i] /= max(counts[i], 1)
 
-    algorithm.classifier.weight = torch.nn.parameter.Parameter(classifier_weights)
-    algorithm.classifier.bias = torch.nn.parameter.Parameter(torch.empty(algorithm.classifier.out_features))
+        algorithm.classifier.weight = torch.nn.parameter.Parameter(classifier_weights)
+        algorithm.classifier.bias = torch.nn.parameter.Parameter(torch.empty(algorithm.classifier.out_features))
 
-    save_checkpoint('model.pkl')
+        save_checkpoint('model.pkl')
+    else:
+        algorithm.train()
+        optimizer = torch.optim.SGD(
+            algorithm.classifier.parameters(),
+            lr=1e-2,
+            weight_decay=algorithm.hparams['weight_decay']
+        )
+        for step in range(args.finetune_step):
+            minibatches = [(x.to(device), y.to(device))
+                        for x,y in next(classifier_minibatch_loaders)]
+            with torch.no_grad():
+                all_x = torch.cat([x for x, y in minibatches])
+                all_y = torch.cat([y for x, y in minibatches])
+            loss = torch.nn.functional.cross_entropy(algorithm.network(all_x), all_y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        save_checkpoint('model.pkl')
+
 
     with open(os.path.join(args.output_dir, 'done'), 'w') as f:
         f.write('done')
