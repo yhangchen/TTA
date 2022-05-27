@@ -355,8 +355,8 @@ if __name__ == "__main__":
             with torch.no_grad():
                 all_x = torch.cat([x for x, y in minibatches])
                 all_y = torch.cat([y for x, y in minibatches])
-            z = algorithm.featurizer(all_x)
-            z = z.to(device)
+                z = algorithm.featurizer(all_x)
+                z = z.to(device)
             for i in range(len(all_y)):
                 classifier_weights[all_y[i]] += z[i]
                 counts[all_y[i]] += 1
